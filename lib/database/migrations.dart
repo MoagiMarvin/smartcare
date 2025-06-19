@@ -42,7 +42,7 @@ class DatabaseMigrations {
   static Future<Map<String, List<Map<String, dynamic>>>> backupAllData(Database db) async {
     final backup = <String, List<Map<String, dynamic>>>{};
     
-    final tables = ['users', 'medications', 'daily_tasks', 'chat_messages', 'clinics', 'mobile_clinics'];
+    final tables = ['users', 'medications', 'daily_tasks', 'chat_messages', 'clinics', 'mobile_clinics', 'appointments', 'notifications', 'settings', 'health_records', 'mental_health_resources'];
     
     for (String table in tables) {
       try {

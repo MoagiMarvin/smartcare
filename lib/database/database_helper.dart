@@ -19,22 +19,166 @@ class DatabaseHelper {
 
   Future<Database> _initDatabase() async {
     String path = join(await getDatabasesPath(), 'smartcare.db');
+    
+    // Check if database exists and get its version
+    bool dbExists = await databaseExists(path);
+    if (dbExists) {
+      final tempDb = await openDatabase(path, readOnly: true);
+      final version = await tempDb.rawQuery('PRAGMA user_version');
+      final currentVersion = version.first['user_version'] as int;
+      await tempDb.close();
+      
+      print('📊 Existing database version: $currentVersion');
+      
+      if (currentVersion < 3) {
+        print('⚠️ Database needs upgrade, forcing it now...');
+      }
+    }
+    
     return await openDatabase(
       path,
-      version: 1,
+      version: 3, // Updated version for appointments
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade, // Added upgrade support
     );
   }
 
+  // ADDED: Database upgrade method
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    print('🔄 Upgrading database from version $oldVersion to $newVersion');
+    
+    if (oldVersion < 2) {
+      // Add appointments table if upgrading from version 1
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS appointments(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          date_time TEXT NOT NULL,
+          location TEXT NOT NULL,
+          doctor_name TEXT,
+          type TEXT NOT NULL DEFAULT 'routine',
+          notes TEXT,
+          phone_number TEXT,
+          completed INTEGER NOT NULL DEFAULT 0,
+          reminder_date TEXT,
+          status TEXT NOT NULL DEFAULT 'scheduled',
+          address TEXT,
+          estimated_duration_minutes INTEGER,
+          created_at TEXT,
+          updated_at TEXT
+        )
+      ''');
+      
+      // Insert sample appointments for version 2
+      await _insertSampleAppointments(db);
+    }
+    
+    if (oldVersion < 3) {
+      // Ensure appointments table exists in version 3
+      await _ensureAppointmentsTable(db);
+    }
+    
+    print('✅ Database upgrade completed');
+  }
+
+  // ADDED: Method to ensure appointments table exists
+  Future<void> _ensureAppointmentsTable(Database db) async {
+    try {
+      final List<Map<String, dynamic>> tableCheck = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='appointments'"
+      );
+      
+      if (tableCheck.isEmpty) {
+        print('⚠️ Creating missing appointments table...');
+        
+        await db.execute('''
+          CREATE TABLE appointments(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            date_time TEXT NOT NULL,
+            location TEXT NOT NULL,
+            doctor_name TEXT,
+            type TEXT NOT NULL DEFAULT 'routine',
+            notes TEXT,
+            phone_number TEXT,
+            completed INTEGER NOT NULL DEFAULT 0,
+            reminder_date TEXT,
+            status TEXT NOT NULL DEFAULT 'scheduled',
+            address TEXT,
+            estimated_duration_minutes INTEGER,
+            created_at TEXT,
+            updated_at TEXT
+          )
+        ''');
+        
+        await _insertSampleAppointments(db);
+        print('✅ Appointments table created with sample data');
+      }
+    } catch (e) {
+      print('❌ Error ensuring appointments table: $e');
+    }
+  }
+
+  // ADDED: Public method to ensure appointments table exists
+  Future<void> ensureAppointmentsTableExists() async {
+    try {
+      final db = await database;
+      
+      // Check if appointments table exists
+      final List<Map<String, dynamic>> tableCheck = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='appointments'"
+      );
+      
+      if (tableCheck.isEmpty) {
+        print('⚠️ Appointments table missing, creating it now...');
+        
+        // Create appointments table
+        await db.execute('''
+          CREATE TABLE appointments(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            date_time TEXT NOT NULL,
+            location TEXT NOT NULL,
+            doctor_name TEXT,
+            type TEXT NOT NULL DEFAULT 'routine',
+            notes TEXT,
+            phone_number TEXT,
+            completed INTEGER NOT NULL DEFAULT 0,
+            reminder_date TEXT,
+            status TEXT NOT NULL DEFAULT 'scheduled',
+            address TEXT,
+            estimated_duration_minutes INTEGER,
+            created_at TEXT,
+            updated_at TEXT
+          )
+        ''');
+        
+        print('✅ Appointments table created successfully');
+        
+        // Add sample appointments
+        await _insertSampleAppointments(db);
+        
+        // Verify table creation
+        final appointments = await db.query('appointments');
+        print('✅ ${appointments.length} sample appointments added');
+        
+      } else {
+        print('✅ Appointments table already exists');
+      }
+    } catch (e) {
+      print('❌ Error ensuring appointments table: $e');
+      rethrow;
+    }
+  }
+
   Future<void> _onCreate(Database db, int version) async {
-    // Users table
+    // Users table (removed next_appointment field)
     await db.execute('''
       CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         adherence_streak INTEGER DEFAULT 0,
         location TEXT,
-        next_appointment TEXT,
         viral_load TEXT,
         cd4_count TEXT,
         created_at TEXT,
@@ -157,19 +301,99 @@ class DatabaseHelper {
       )
     ''');
 
+    // Appointments table
+    await db.execute('''
+      CREATE TABLE appointments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        date_time TEXT NOT NULL,
+        location TEXT NOT NULL,
+        doctor_name TEXT,
+        type TEXT NOT NULL DEFAULT 'routine',
+        notes TEXT,
+        phone_number TEXT,
+        completed INTEGER NOT NULL DEFAULT 0,
+        reminder_date TEXT,
+        status TEXT NOT NULL DEFAULT 'scheduled',
+        address TEXT,
+        estimated_duration_minutes INTEGER,
+        created_at TEXT,
+        updated_at TEXT
+      )
+    ''');
+
     // Insert default data
     await _insertDefaultData(db);
+  }
+
+  // ADDED: Separate method for inserting sample appointments
+  Future<void> _insertSampleAppointments(Database db) async {
+    final now = DateTime.now().toIso8601String();
+    
+    try {
+      // Insert sample appointments
+      await db.insert('appointments', {
+        'title': 'Check-up with Dr. Smith',
+        'date_time': DateTime.now().add(Duration(days: 6)).toIso8601String(),
+        'location': 'Charlotte Maxeke Hospital',
+        'doctor_name': 'Dr. Sarah Smith',
+        'type': 'routine',
+        'notes': 'Bring previous test results',
+        'phone_number': '011 488 4911',
+        'completed': 0,
+        'status': 'scheduled',
+        'address': '7 York Road, Parktown, Johannesburg',
+        'estimated_duration_minutes': 60,
+        'created_at': now,
+        'updated_at': now,
+      });
+
+      await db.insert('appointments', {
+        'title': 'Blood Test - Viral Load',
+        'date_time': DateTime.now().add(Duration(days: 26)).toIso8601String(),
+        'location': 'Lancet Laboratories',
+        'doctor_name': null,
+        'type': 'lab',
+        'notes': 'Fasting required - no food 12 hours before',
+        'phone_number': '010 001 0001',
+        'completed': 0,
+        'status': 'scheduled',
+        'address': 'Sandton Medical Centre, Sandton',
+        'estimated_duration_minutes': 30,
+        'created_at': now,
+        'updated_at': now,
+      });
+
+      await db.insert('appointments', {
+        'title': 'Follow-up - ARV Adjustment',
+        'date_time': DateTime.now().add(Duration(days: 3)).toIso8601String(),
+        'location': 'Helen Joseph Hospital',
+        'doctor_name': 'Dr. Michael Johnson',
+        'type': 'follow-up',
+        'notes': 'Discuss side effects and medication adjustments',
+        'phone_number': '011 276 8000',
+        'completed': 0,
+        'status': 'scheduled',
+        'address': 'Perth Road, Westdene, Johannesburg',
+        'estimated_duration_minutes': 45,
+        'created_at': now,
+        'updated_at': now,
+      });
+      
+      print('✅ Sample appointments inserted successfully');
+    } catch (e) {
+      print('❌ Error inserting sample appointments: $e');
+    }
   }
 
   Future<void> _insertDefaultData(Database db) async {
     final now = DateTime.now().toIso8601String();
     
-    // Insert default user
+    // Insert default user (removed next_appointment)
     await db.insert('users', {
       'name': 'Alex',
       'adherence_streak': 12,
       'location': 'Johannesburg, Gauteng',
-      'next_appointment': 'June 19, 2025',
       'viral_load': 'Undetectable',
       'cd4_count': '650',
       'created_at': now,
@@ -368,6 +592,9 @@ class DatabaseHelper {
       'created_at': now,
       'updated_at': now,
     });
+
+    // Insert sample appointments using the separate method
+    await _insertSampleAppointments(db);
 
     // Insert welcome chat message
     await db.insert('chat_messages', {
@@ -656,6 +883,97 @@ class DatabaseHelper {
       ..['updated_at'] = DateTime.now().toIso8601String());
   }
 
+  // FIXED: Appointment Database Operations with table existence check
+  Future<List<Appointment>> getAppointments() async {
+    try {
+      // ENSURE TABLE EXISTS FIRST
+      await ensureAppointmentsTableExists();
+      
+      final db = await database;
+      final List<Map<String, dynamic>> maps = await db.query(
+        'appointments',
+        orderBy: 'date_time ASC',
+      );
+
+      print('✅ Retrieved ${maps.length} appointments from database');
+      return List.generate(maps.length, (i) {
+        return Appointment.fromMap(maps[i]);
+      });
+    } catch (e) {
+      print('❌ Error getting appointments: $e');
+      return [];
+    }
+  }
+
+  Future<int> insertAppointment(Appointment appointment) async {
+    try {
+      // ENSURE TABLE EXISTS FIRST
+      await ensureAppointmentsTableExists();
+      
+      final db = await database;
+      print('📝 Inserting appointment: ${appointment.title}');
+      
+      final result = await db.insert(
+        'appointments',
+        appointment.toMap()
+          ..['created_at'] = DateTime.now().toIso8601String()
+          ..['updated_at'] = DateTime.now().toIso8601String(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      
+      print('✅ Appointment inserted with ID: $result');
+      return result;
+    } catch (e) {
+      print('❌ Error inserting appointment: $e');
+      return 0;
+    }
+  }
+
+  Future<int> updateAppointment(Appointment appointment) async {
+    try {
+      // ENSURE TABLE EXISTS FIRST
+      await ensureAppointmentsTableExists();
+      
+      final db = await database;
+      print('📝 Updating appointment: ${appointment.title}');
+      
+      final result = await db.update(
+        'appointments',
+        appointment.toMap()..['updated_at'] = DateTime.now().toIso8601String(),
+        where: 'id = ?',
+        whereArgs: [appointment.id],
+      );
+      
+      print('✅ Appointment updated, rows affected: $result');
+      return result;
+    } catch (e) {
+      print('❌ Error updating appointment: $e');
+      return 0;
+    }
+  }
+
+  Future<int> deleteAppointment(int appointmentId) async {
+    try {
+      // ENSURE TABLE EXISTS FIRST
+      await ensureAppointmentsTableExists();
+      
+      final db = await database;
+      print('🗑️ Deleting appointment with ID: $appointmentId');
+      
+      final result = await db.delete(
+        'appointments',
+        where: 'id = ?',
+        whereArgs: [appointmentId],
+      );
+      
+      print('✅ Appointment deleted, rows affected: $result');
+      return result;
+    } catch (e) {
+      print('❌ Error deleting appointment: $e');
+      return 0;
+    }
+  }
+
   // Analytics operations
   Future<Map<String, dynamic>> getMedicationHistory(int medicationId, {int days = 30}) async {
     final db = await database;
@@ -679,6 +997,41 @@ class DatabaseHelper {
       'doses': doses.map((dose) => MedicationDose.fromMap(dose)).toList(),
       'stockChanges': stockChanges,
     };
+  }
+
+  // ADDED: Debugging and utility methods
+  Future<List<String>> getAllTableNames() async {
+    final db = await database;
+    final List<Map<String, dynamic>> tables = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table'"
+    );
+    return tables.map((table) => table['name'] as String).toList();
+  }
+
+  Future<void> debugDatabaseInfo() async {
+    try {
+      final tables = await getAllTableNames();
+      print('🔍 Database Debug Info:');
+      print('📋 Available tables: $tables');
+      
+      if (tables.contains('appointments')) {
+        final appointments = await getAppointments();
+        print('📅 Total appointments: ${appointments.length}');
+        for (var apt in appointments) {
+          print('   - ${apt.title} on ${apt.formattedDateTime}');
+        }
+      } else {
+        print('❌ Appointments table not found!');
+      }
+    } catch (e) {
+      print('❌ Error debugging database: $e');
+    }
+  }
+
+  Future<int> getCurrentDatabaseVersion() async {
+    final db = await database;
+    final List<Map<String, dynamic>> result = await db.rawQuery('PRAGMA user_version');
+    return result.first['user_version'] as int;
   }
 
   // Utility operations

@@ -24,6 +24,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   User? _user;
   List<Medication> _medications = [];
   List<DailyTask> _dailyTasks = [];
+  List<Appointment> _appointments = [];
   List<Map<String, dynamic>> _todaysSchedule = [];
   Map<String, dynamic> _healthInsights = {};
   bool _isLoading = true;
@@ -54,6 +55,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final user = await _dataManager.getUser();
       final medications = await _dataManager.getMedications();
       final dailyTasks = await _dataManager.getTodaysTasks();
+      final appointments = await _dataManager.getAppointments();
       final schedule = await _dataManager.getTodaysMedicationSchedule();
       final insights = await _dataManager.getHealthInsights();
       
@@ -61,10 +63,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _user = user;
         _medications = medications;
         _dailyTasks = dailyTasks;
+        _appointments = appointments;
         _todaysSchedule = schedule;
         _healthInsights = insights;
         _isLoading = false;
       });
+      
+      // Debug print
+      print('Dashboard loaded ${_appointments.length} appointments');
+      for (var apt in _appointments) {
+        print('Appointment: ${apt.title} on ${apt.formattedDateTime}');
+      }
     } catch (e) {
       setState(() => _isLoading = false);
       _showErrorSnackBar('Failed to load data: $e');
@@ -127,6 +136,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
       default:
         return Icons.check_circle;
     }
+  }
+
+  // Get next appointment for display
+  Appointment? get _nextAppointment {
+    final upcomingAppointments = _appointments
+        .where((apt) => !apt.completed && apt.dateTime.isAfter(DateTime.now()))
+        .toList();
+    
+    if (upcomingAppointments.isEmpty) return null;
+    
+    upcomingAppointments.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+    return upcomingAppointments.first;
+  }
+
+  // Get appointments that need reminders
+  List<Appointment> get _appointmentReminders {
+    final now = DateTime.now();
+    return _appointments
+        .where((apt) => !apt.completed && apt.dateTime.isAfter(now))
+        .where((apt) => apt.shouldRemind)
+        .toList()
+      ..sort((a, b) => a.dateTime.compareTo(b.dateTime));
+  }
+
+  // Get today's appointments
+  List<Appointment> get _todaysAppointments {
+    final today = DateTime.now();
+    return _appointments
+        .where((apt) => 
+          apt.dateTime.year == today.year &&
+          apt.dateTime.month == today.month &&
+          apt.dateTime.day == today.day)
+        .toList()
+      ..sort((a, b) => a.dateTime.compareTo(b.dateTime));
   }
 
   Widget _buildMedicationScheduleCard() {
@@ -374,6 +417,206 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildAppointmentAlertsCard() {
+    final reminders = _appointmentReminders;
+    final nextAppointment = _nextAppointment;
+    final todaysAppointments = _todaysAppointments;
+
+    // Show appointment reminders or next appointment info
+    List<Widget> alertWidgets = [];
+
+    // Today's appointments (highest priority)
+    if (todaysAppointments.isNotEmpty) {
+      for (final appointment in todaysAppointments.take(2)) {
+        alertWidgets.add(
+          Container(
+            margin: EdgeInsets.only(bottom: 8),
+            padding: EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: appointment.completed ? Color(0xFFECFDF5) : Colors.orange[50],
+              border: Border.all(
+                color: appointment.completed ? Color(0xFF10B981) : Colors.orange,
+                width: 2,
+              ),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  appointment.completed ? Icons.check_circle : Icons.event_busy,
+                  color: appointment.completed ? Color(0xFF10B981) : Colors.orange[700],
+                  size: 20,
+                ),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        appointment.completed 
+                            ? '✅ ${appointment.title} - Completed'
+                            : '🚨 TODAY: ${appointment.title}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: appointment.completed ? Color(0xFF047857) : Colors.orange[800],
+                          decoration: appointment.completed ? TextDecoration.lineThrough : null,
+                        ),
+                      ),
+                      Text(
+                        '${appointment.formattedDateTime.split(' at ')[1]} at ${appointment.location}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: appointment.completed ? Color(0xFF047857) : Colors.orange[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+
+    // Appointment reminders (3, 2, 1 day warnings)
+    if (reminders.isNotEmpty) {
+      for (final appointment in reminders.take(2)) {
+        final days = appointment.daysUntil;
+        Color alertColor;
+        IconData alertIcon;
+        
+        if (days == 0) {
+          continue; // Already handled in today's appointments
+        } else if (days == 1) {
+          alertColor = Colors.blue;
+          alertIcon = Icons.event;
+        } else {
+          alertColor = Colors.blue;
+          alertIcon = Icons.event_note;
+        }
+
+        alertWidgets.add(
+          Container(
+            margin: EdgeInsets.only(bottom: 8),
+            padding: EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              border: Border.all(color: Colors.blue[200]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(alertIcon, color: alertColor, size: 16),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    appointment.reminderMessage,
+                    style: TextStyle(color: alertColor, fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    } else if (nextAppointment != null && todaysAppointments.isEmpty) {
+      // Show next appointment if no immediate reminders and no today appointments
+      alertWidgets.add(
+        Row(
+          children: [
+            Icon(Icons.calendar_today, color: Colors.blue[700], size: 16),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Next: ${nextAppointment.title} on ${nextAppointment.formattedDateTime}',
+                style: TextStyle(color: Colors.blue[700]),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (alertWidgets.isEmpty) {
+      // No appointments scheduled
+      alertWidgets.add(
+        Row(
+          children: [
+            Icon(Icons.calendar_month, color: Colors.grey[600], size: 16),
+            SizedBox(width: 8),
+            Text(
+              'No upcoming appointments scheduled',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Add mobile clinic info
+    alertWidgets.add(SizedBox(height: 8));
+    alertWidgets.add(
+      Row(
+        children: [
+          Icon(Icons.local_hospital, color: Colors.green[700], size: 16),
+          SizedBox(width: 8),
+          Text(
+            '🚐 Mobile clinic nearby tomorrow (Soweto)',
+            style: TextStyle(color: Colors.green[700]),
+          ),
+        ],
+      ),
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Color(0xFFEFF6FF),
+        border: Border(left: BorderSide(color: Colors.blue, width: 4)),
+        borderRadius: BorderRadius.only(
+          topRight: Radius.circular(8),
+          bottomRight: Radius.circular(8),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.notifications, color: Colors.blue, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'Appointments & Reminders',
+                style: TextStyle(fontWeight: FontWeight.w600, color: Colors.blue[800]),
+              ),
+              Spacer(),
+              if (_appointments.isNotEmpty)
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[100],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_appointments.length}',
+                    style: TextStyle(
+                      color: Colors.blue[800],
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          SizedBox(height: 8),
+          ...alertWidgets,
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -406,6 +649,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       );
     }
+
+    final nextAppointment = _nextAppointment;
 
     return RefreshIndicator(
       onRefresh: _loadData,
@@ -496,8 +741,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             children: [
                               Icon(Icons.calendar_today, color: Color(0xFF0D9488), size: 20),
                               SizedBox(width: 4),
-                              Text('Next: ${_user!.nextAppointment}', 
-                                   style: TextStyle(fontSize: 12, color: Color(0xFF0D9488))),
+                              Text(
+                                nextAppointment != null 
+                                    ? 'Next: ${nextAppointment.formattedDateTime.split(' at ')[0]}'
+                                    : 'No appointments',
+                                style: TextStyle(fontSize: 12, color: Color(0xFF0D9488)),
+                              ),
                             ],
                           ),
                         ],
@@ -600,35 +849,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             // Stock Alerts
             _buildStockAlertsCard(),
 
-            // Important Alerts
-            Container(
-              width: double.infinity,
-              padding: EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Color(0xFFEFF6FF),
-                border: Border(left: BorderSide(color: Colors.blue, width: 4)),
-                borderRadius: BorderRadius.only(
-                  topRight: Radius.circular(8),
-                  bottomRight: Radius.circular(8),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.notifications, color: Colors.blue, size: 20),
-                      SizedBox(width: 8),
-                      Text('Upcoming Reminders', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.blue[800])),
-                    ],
-                  ),
-                  SizedBox(height: 8),
-                  Text('🚐 Mobile clinic nearby tomorrow (Soweto)', style: TextStyle(color: Colors.green[700])),
-                  SizedBox(height: 4),
-                  Text('📅 Next appointment: ${_user!.nextAppointment}', style: TextStyle(color: Colors.blue[700])),
-                ],
-              ),
-            ),
+            // FIXED: Appointment Alerts and Important Reminders
+            _buildAppointmentAlertsCard(),
             SizedBox(height: 24),
 
             // Today's Care Tasks

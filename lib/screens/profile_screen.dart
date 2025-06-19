@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/data_manager.dart';
 import '../models/models.dart';
-
+import '../widgets/appointment_form.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -16,6 +16,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   User? _user;
   List<Medication> _medications = [];
   List<Medication> _temporaryMedications = [];
+  List<Appointment> _appointments = [];
   Map<String, dynamic> _medicationInsights = {};
   bool _isLoading = true;
 
@@ -32,12 +33,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final user = await _dataManager.getUser();
       final medications = await _dataManager.getMedications();
       final tempMedications = await _dataManager.getTemporaryMedications();
+      final appointments = await _dataManager.getAppointments();
       final insights = await _dataManager.getMedicationInsights();
       
       setState(() {
         _user = user;
         _medications = medications.where((med) => !med.isTemporary).toList();
         _temporaryMedications = tempMedications;
+        _appointments = appointments;
         _medicationInsights = insights;
         _isLoading = false;
       });
@@ -90,6 +93,99 @@ class _ProfileScreenState extends State<ProfileScreen> {
       } catch (e) {
         _showErrorSnackBar('Error updating medication: $e');
       }
+    }
+  }
+
+  Future<void> _addAppointment() async {
+    final result = await showAppointmentForm(context);
+    if (result != null) {
+      try {
+        bool success = await _dataManager.addAppointment(result);
+        if (success) {
+          _showSuccessSnackBar('Appointment added successfully');
+          await _loadData();
+        } else {
+          _showErrorSnackBar('Failed to add appointment');
+        }
+      } catch (e) {
+        _showErrorSnackBar('Error adding appointment: $e');
+      }
+    }
+  }
+
+  Future<void> _editAppointment(Appointment appointment) async {
+    final result = await showAppointmentForm(context, existingAppointment: appointment);
+    if (result != null) {
+      try {
+        bool success = await _dataManager.updateAppointment(result);
+        if (success) {
+          _showSuccessSnackBar('Appointment updated successfully');
+          await _loadData();
+        } else {
+          _showErrorSnackBar('Failed to update appointment');
+        }
+      } catch (e) {
+        _showErrorSnackBar('Error updating appointment: $e');
+      }
+    }
+  }
+
+  Future<void> _deleteAppointment(Appointment appointment) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete Appointment'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Are you sure you want to delete:'),
+            SizedBox(height: 8),
+            Text(appointment.title, style: TextStyle(fontWeight: FontWeight.bold)),
+            Text(appointment.formattedDateTime, style: TextStyle(color: Colors.grey[600])),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: Text('Delete'),
+          ),
+        ],
+      ),
+    ) ?? false;
+    
+    if (confirm) {
+      try {
+        bool success = await _dataManager.deleteAppointment(appointment.id!);
+        if (success) {
+          _showSuccessSnackBar('Appointment deleted successfully');
+          await _loadData();
+        } else {
+          _showErrorSnackBar('Failed to delete appointment');
+        }
+      } catch (e) {
+        _showErrorSnackBar('Error deleting appointment: $e');
+      }
+    }
+  }
+
+  Future<void> _markAppointmentCompleted(Appointment appointment) async {
+    try {
+      final updated = appointment.copyWith(completed: true, status: 'completed');
+      bool success = await _dataManager.updateAppointment(updated);
+      if (success) {
+        _showSuccessSnackBar('Appointment marked as completed');
+        await _loadData();
+      } else {
+        _showErrorSnackBar('Failed to update appointment');
+      }
+    } catch (e) {
+      _showErrorSnackBar('Error updating appointment: $e');
     }
   }
 
@@ -1018,6 +1114,269 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _buildAppointmentCard(Appointment appointment) {
+    final isToday = appointment.isToday;
+    final isTomorrow = appointment.isTomorrow;
+    final isOverdue = appointment.dateTime.isBefore(DateTime.now()) && !appointment.completed;
+    
+    return Container(
+      margin: EdgeInsets.only(bottom: 16),
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: isOverdue ? Colors.red : (isToday ? Colors.orange : (isTomorrow ? Colors.blue : Colors.grey[300]!)),
+          width: (isOverdue || isToday) ? 2 : 1,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        color: appointment.completed 
+            ? Color(0xFFECFDF5) 
+            : (isOverdue ? Colors.red[50] : (isToday ? Colors.orange[50] : (isTomorrow ? Colors.blue[50] : Colors.white))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            appointment.title,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600, 
+                              fontSize: 16,
+                              decoration: appointment.completed ? TextDecoration.lineThrough : null,
+                              color: appointment.completed ? Color(0xFF047857) : null,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: _getTypeColor(appointment.type),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            appointment.type.toUpperCase(),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      appointment.formattedDateTime,
+                      style: TextStyle(
+                        color: isOverdue ? Colors.red[700] : Colors.grey[600], 
+                        fontSize: 14,
+                        fontWeight: isOverdue ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                    ),
+                    Text('📍 ${appointment.location}', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                    if (appointment.doctorName != null)
+                      Text('👨‍⚕️ ${appointment.doctorName}', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                  ],
+                ),
+              ),
+              PopupMenuButton(
+                itemBuilder: (context) => [
+                  if (!appointment.completed)
+                    PopupMenuItem(
+                      value: 'complete',
+                      child: ListTile(
+                        leading: Icon(Icons.check_circle, color: Color(0xFF10B981)),
+                        title: Text('Mark Complete'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  PopupMenuItem(
+                    value: 'edit',
+                    child: ListTile(
+                      leading: Icon(Icons.edit),
+                      title: Text('Edit'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: ListTile(
+                      leading: Icon(Icons.delete, color: Colors.red),
+                      title: Text('Delete', style: TextStyle(color: Colors.red)),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+                onSelected: (value) {
+                  switch (value) {
+                    case 'complete':
+                      _markAppointmentCompleted(appointment);
+                      break;
+                    case 'edit':
+                      _editAppointment(appointment);
+                      break;
+                    case 'delete':
+                      _deleteAppointment(appointment);
+                      break;
+                  }
+                },
+              ),
+            ],
+          ),
+
+          // Status indicators
+          if (isToday || isTomorrow || isOverdue || appointment.completed) ...[
+            SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: appointment.completed 
+                    ? Color(0xFFD1FAE5)
+                    : (isOverdue ? Colors.red[100] : (isToday ? Colors.orange[100] : Colors.blue[100])),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    appointment.completed 
+                        ? Icons.check_circle 
+                        : (isOverdue ? Icons.error : Icons.schedule),
+                    color: appointment.completed 
+                        ? Color(0xFF047857)
+                        : (isOverdue ? Colors.red[700] : (isToday ? Colors.orange[700] : Colors.blue[700])),
+                    size: 20,
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      appointment.completed 
+                          ? 'Appointment completed ✓'
+                          : (isOverdue ? 'Overdue - Please reschedule' : appointment.reminderMessage),
+                      style: TextStyle(
+                        color: appointment.completed 
+                            ? Color(0xFF047857)
+                            : (isOverdue ? Colors.red[700] : (isToday ? Colors.orange[700] : Colors.blue[700])),
+                        fontWeight: FontWeight.w500,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // Additional details
+          if (appointment.notes != null || appointment.phoneNumber != null || appointment.address != null) ...[
+            SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (appointment.phoneNumber != null) ...[
+                    Row(
+                      children: [
+                        Icon(Icons.phone, size: 16, color: Colors.grey[600]),
+                        SizedBox(width: 8),
+                        Text(appointment.phoneNumber!, style: TextStyle(fontSize: 14)),
+                      ],
+                    ),
+                    SizedBox(height: 4),
+                  ],
+                  if (appointment.address != null) ...[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
+                        SizedBox(width: 8),
+                        Expanded(child: Text(appointment.address!, style: TextStyle(fontSize: 14))),
+                      ],
+                    ),
+                    SizedBox(height: 4),
+                  ],
+                  if (appointment.notes != null) ...[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.note, size: 16, color: Colors.grey[600]),
+                        SizedBox(width: 8),
+                        Expanded(child: Text(appointment.notes!, style: TextStyle(fontSize: 14))),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+
+          // Quick actions
+          if (!appointment.completed) ...[
+            SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => _markAppointmentCompleted(appointment),
+                    icon: Icon(Icons.check_circle, size: 16),
+                    label: Text('Mark Complete'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Color(0xFF10B981),
+                      foregroundColor: Colors.white,
+                      minimumSize: Size(0, 36),
+                    ),
+                  ),
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => _editAppointment(appointment),
+                    icon: Icon(Icons.edit, size: 16),
+                    label: Text('Reschedule'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Color(0xFF0D9488),
+                      foregroundColor: Colors.white,
+                      minimumSize: Size(0, 36),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Color _getTypeColor(String type) {
+    switch (type) {
+      case 'urgent':
+        return Colors.red;
+      case 'follow-up':
+        return Colors.orange;
+      case 'lab':
+        return Colors.purple;
+      case 'specialist':
+        return Colors.indigo;
+      default:
+        return Color(0xFF10B981);
+    }
+  }
+
   Widget _buildInsightsCard() {
     return Container(
       width: double.infinity,
@@ -1034,7 +1393,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Medication Overview',
+            'Health Overview',
             style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
           ),
           SizedBox(height: 16),
@@ -1054,9 +1413,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('${_medicationInsights['total_daily_pills'] ?? 0}', 
+                    Text('${_appointments.where((apt) => apt.isUpcoming && !apt.completed).length}', 
                          style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                    Text('Daily Pills', style: TextStyle(color: Colors.white.withOpacity(0.9))),
+                    Text('Upcoming Appointments', style: TextStyle(color: Colors.white.withOpacity(0.9))),
                   ],
                 ),
               ),
@@ -1097,7 +1456,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, size: 64, color: Colors.grey[400]),
+            Icon(Icons.error_outline, size: 64, color: Colors.grey[400]), 
             SizedBox(height: 16),
             Text('Unable to load profile', style: TextStyle(color: Colors.grey[600])),
             SizedBox(height: 16),
@@ -1109,6 +1468,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       );
     }
+
+    // Separate upcoming and completed appointments
+    final upcomingAppointments = _appointments.where((apt) => !apt.completed && apt.dateTime.isAfter(DateTime.now())).toList();
+    final pastAppointments = _appointments.where((apt) => apt.completed || apt.dateTime.isBefore(DateTime.now())).toList();
+    
+    // Sort appointments
+    upcomingAppointments.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+    pastAppointments.sort((a, b) => b.dateTime.compareTo(a.dateTime));
 
     return RefreshIndicator(
       onRefresh: _loadData,
@@ -1201,8 +1568,91 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             SizedBox(height: 24),
 
-            // Medication Insights
+            // Health Overview
             _buildInsightsCard(),
+            SizedBox(height: 24),
+
+            // My Appointments Section
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 8, offset: Offset(0, 2))],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('My Appointments', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      ElevatedButton.icon(
+                        onPressed: _addAppointment,
+                        icon: Icon(Icons.add),
+                        label: Text('Add Appointment'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Color(0xFF10B981),
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 16),
+                  if (_appointments.isEmpty)
+                    Container(
+                      padding: EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[50],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.calendar_today, color: Colors.grey[400], size: 32),
+                          SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('No appointments scheduled', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+                                Text('Add your medical appointments to stay on track', style: TextStyle(color: Colors.grey[600])),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else ...[
+                    // Upcoming appointments
+                    if (upcomingAppointments.isNotEmpty) ...[
+                      Text('Upcoming Appointments', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.grey[700])),
+                      SizedBox(height: 12),
+                      ...upcomingAppointments.map((appointment) => _buildAppointmentCard(appointment)),
+                    ],
+                    
+                    // Past appointments
+                    if (pastAppointments.isNotEmpty) ...[
+                      if (upcomingAppointments.isNotEmpty) SizedBox(height: 16),
+                      Text('Past Appointments', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.grey[700])),
+                      SizedBox(height: 12),
+                      ...pastAppointments.take(3).map((appointment) => _buildAppointmentCard(appointment)),
+                      if (pastAppointments.length > 3) ...[
+                        SizedBox(height: 8),
+                        Center(
+                          child: TextButton(
+                            onPressed: () {
+                              // Show all past appointments
+                            },
+                            child: Text('View all past appointments (${pastAppointments.length - 3} more)'),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ],
+                ],
+              ),
+            ),
             SizedBox(height: 24),
 
             // My Medications

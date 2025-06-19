@@ -413,6 +413,59 @@ class DataManager {
     return result > 0;
   }
 
+  // Appointment Management Methods
+  Future<List<Appointment>> getAppointments() async {
+    return await _dbHelper.getAppointments();
+  }
+
+  Future<bool> addAppointment(Appointment appointment) async {
+    int result = await _dbHelper.insertAppointment(appointment);
+    return result > 0;
+  }
+
+  Future<bool> updateAppointment(Appointment appointment) async {
+    int result = await _dbHelper.updateAppointment(appointment);
+    return result > 0;
+  }
+
+  Future<bool> deleteAppointment(int appointmentId) async {
+    int result = await _dbHelper.deleteAppointment(appointmentId);
+    return result > 0;
+  }
+
+  Future<Appointment?> getNextAppointment() async {
+    final appointments = await getAppointments();
+    final upcomingAppointments = appointments
+        .where((apt) => !apt.completed && apt.dateTime.isAfter(DateTime.now()))
+        .toList();
+    
+    if (upcomingAppointments.isEmpty) return null;
+    
+    upcomingAppointments.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+    return upcomingAppointments.first;
+  }
+
+  Future<List<Appointment>> getUpcomingAppointments({int days = 7}) async {
+    final appointments = await getAppointments();
+    final endDate = DateTime.now().add(Duration(days: days));
+    
+    return appointments
+        .where((apt) => !apt.completed && 
+                      apt.dateTime.isAfter(DateTime.now()) &&
+                      apt.dateTime.isBefore(endDate))
+        .toList()
+      ..sort((a, b) => a.dateTime.compareTo(b.dateTime));
+  }
+
+  Future<List<Appointment>> getAppointmentReminders() async {
+    final appointments = await getAppointments();
+    
+    return appointments
+        .where((apt) => apt.shouldRemind)
+        .toList()
+      ..sort((a, b) => a.dateTime.compareTo(b.dateTime));
+  }
+
   // Enhanced analytics and insights
   Future<Map<String, dynamic>> getHealthInsights() async {
     User? user = await getUser();

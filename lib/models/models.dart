@@ -256,6 +256,172 @@ class Medication {
   int get totalPills => originalStock;
 }
 
+// NEW: Appointment model
+class Appointment {
+  final int? id;
+  final String title;
+  final DateTime dateTime;
+  final String location;
+  final String? doctorName;
+  final String type; // 'routine', 'urgent', 'follow-up', 'lab', 'specialist'
+  final String? notes;
+  final String? phoneNumber;
+  final bool completed;
+  final DateTime? reminderDate;
+  final String status; // 'scheduled', 'completed', 'cancelled', 'rescheduled'
+  final String? address;
+  final Duration? estimatedDuration;
+
+  Appointment({
+    this.id,
+    required this.title,
+    required this.dateTime,
+    required this.location,
+    this.doctorName,
+    this.type = 'routine',
+    this.notes,
+    this.phoneNumber,
+    this.completed = false,
+    this.reminderDate,
+    this.status = 'scheduled',
+    this.address,
+    this.estimatedDuration,
+  });
+
+  // Check if appointment is today
+  bool get isToday {
+    final now = DateTime.now();
+    return dateTime.year == now.year &&
+           dateTime.month == now.month &&
+           dateTime.day == now.day;
+  }
+
+  // Check if appointment is tomorrow
+  bool get isTomorrow {
+    final tomorrow = DateTime.now().add(Duration(days: 1));
+    return dateTime.year == tomorrow.year &&
+           dateTime.month == tomorrow.month &&
+           dateTime.day == tomorrow.day;
+  }
+
+  // Check if appointment is upcoming (within next 7 days)
+  bool get isUpcoming {
+    final now = DateTime.now();
+    final inAWeek = now.add(Duration(days: 7));
+    return dateTime.isAfter(now) && dateTime.isBefore(inAWeek);
+  }
+
+  // Get days until appointment
+  int get daysUntil {
+    final now = DateTime.now();
+    final difference = dateTime.difference(DateTime(now.year, now.month, now.day));
+    return difference.inDays;
+  }
+
+  // Check if reminder should be shown
+  bool get shouldRemind {
+    final daysUntil = this.daysUntil;
+    return daysUntil <= 3 && daysUntil >= 0 && !completed;
+  }
+
+  // Get reminder message
+  String get reminderMessage {
+    final days = daysUntil;
+    if (days == 0) return 'Today: $title at ${_formatTime(dateTime)}';
+    if (days == 1) return 'Tomorrow: $title at ${_formatTime(dateTime)}';
+    return 'In $days days: $title';
+  }
+
+  // Format time for display
+  String _formatTime(DateTime dateTime) {
+    final hour = dateTime.hour;
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+    return '$displayHour:$minute $period';
+  }
+
+  // Get formatted date and time
+  String get formattedDateTime {
+    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final month = months[dateTime.month - 1];
+    final day = dateTime.day;
+    final time = _formatTime(dateTime);
+    return '$month $day at $time';
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'title': title,
+      'date_time': dateTime.toIso8601String(),
+      'location': location,
+      'doctor_name': doctorName,
+      'type': type,
+      'notes': notes,
+      'phone_number': phoneNumber,
+      'completed': completed ? 1 : 0,
+      'reminder_date': reminderDate?.toIso8601String(),
+      'status': status,
+      'address': address,
+      'estimated_duration_minutes': estimatedDuration?.inMinutes,
+    };
+  }
+
+  factory Appointment.fromMap(Map<String, dynamic> map) {
+    return Appointment(
+      id: map['id'],
+      title: map['title'],
+      dateTime: DateTime.parse(map['date_time']),
+      location: map['location'],
+      doctorName: map['doctor_name'],
+      type: map['type'] ?? 'routine',
+      notes: map['notes'],
+      phoneNumber: map['phone_number'],
+      completed: map['completed'] == 1,
+      reminderDate: map['reminder_date'] != null ? DateTime.parse(map['reminder_date']) : null,
+      status: map['status'] ?? 'scheduled',
+      address: map['address'],
+      estimatedDuration: map['estimated_duration_minutes'] != null 
+          ? Duration(minutes: map['estimated_duration_minutes']) 
+          : null,
+    );
+  }
+
+  Appointment copyWith({
+    int? id,
+    String? title,
+    DateTime? dateTime,
+    String? location,
+    String? doctorName,
+    String? type,
+    String? notes,
+    String? phoneNumber,
+    bool? completed,
+    DateTime? reminderDate,
+    String? status,
+    String? address,
+    Duration? estimatedDuration,
+  }) {
+    return Appointment(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      dateTime: dateTime ?? this.dateTime,
+      location: location ?? this.location,
+      doctorName: doctorName ?? this.doctorName,
+      type: type ?? this.type,
+      notes: notes ?? this.notes,
+      phoneNumber: phoneNumber ?? this.phoneNumber,
+      completed: completed ?? this.completed,
+      reminderDate: reminderDate ?? this.reminderDate,
+      status: status ?? this.status,
+      address: address ?? this.address,
+      estimatedDuration: estimatedDuration ?? this.estimatedDuration,
+    );
+  }
+}
+
 class MedicationDose {
   final int? id;
   final int medicationId;
@@ -463,12 +629,12 @@ class MobileClinic {
   }
 }
 
+// UPDATED: User model without hardcoded nextAppointment
 class User {
   final int? id;
   final String name;
   final int adherenceStreak;
   final String location;
-  final String nextAppointment;
   final String viralLoad;
   final String cd4Count;
 
@@ -477,7 +643,6 @@ class User {
     required this.name,
     required this.adherenceStreak,
     required this.location,
-    required this.nextAppointment,
     required this.viralLoad,
     required this.cd4Count,
   });
@@ -488,7 +653,6 @@ class User {
       'name': name,
       'adherence_streak': adherenceStreak,
       'location': location,
-      'next_appointment': nextAppointment,
       'viral_load': viralLoad,
       'cd4_count': cd4Count,
     };
@@ -500,7 +664,6 @@ class User {
       name: map['name'],
       adherenceStreak: map['adherence_streak'],
       location: map['location'],
-      nextAppointment: map['next_appointment'],
       viralLoad: map['viral_load'],
       cd4Count: map['cd4_count'],
     );
@@ -511,7 +674,6 @@ class User {
     String? name,
     int? adherenceStreak,
     String? location,
-    String? nextAppointment,
     String? viralLoad,
     String? cd4Count,
   }) {
@@ -520,7 +682,6 @@ class User {
       name: name ?? this.name,
       adherenceStreak: adherenceStreak ?? this.adherenceStreak,
       location: location ?? this.location,
-      nextAppointment: nextAppointment ?? this.nextAppointment,
       viralLoad: viralLoad ?? this.viralLoad,
       cd4Count: cd4Count ?? this.cd4Count,
     );
