@@ -1,8 +1,33 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'screens/home_screen.dart';
+import 'database/database_helper.dart';
 
-void main() {
+void main() async {
+  // Ensure that widget binding is initialized
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize database
+  await _initializeDatabase();
+  
+  // Set preferred orientations
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+  
   runApp(SmartCareApp());
+}
+
+Future<void> _initializeDatabase() async {
+  try {
+    // Initialize database helper to create tables and default data
+    final dbHelper = DatabaseHelper();
+    await dbHelper.database; // This will trigger database creation
+    print('Database initialized successfully');
+  } catch (e) {
+    print('Error initializing database: $e');
+  }
 }
 
 class SmartCareApp extends StatelessWidget {

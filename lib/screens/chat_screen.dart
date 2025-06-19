@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/chat_service.dart';
+import '../services/data_manager.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -10,20 +11,39 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  final DataManager _dataManager = DataManager();
   List<ChatMessage> _chatMessages = [];
   final TextEditingController _chatController = TextEditingController();
   final ScrollController _chatScrollController = ScrollController();
   bool _isTyping = false;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    // Initialize chat with welcome message
-    _chatMessages.add(ChatMessage(
-      text: "Hello! I'm your SmartCare assistant. I'm here to help answer your health-related questions and provide support. How can I assist you today?",
-      isUser: false,
-      timestamp: DateTime.now(),
-    ));
+    _loadChatHistory();
+  }
+
+  Future<void> _loadChatHistory() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      final messages = await _dataManager.getChatMessages();
+      setState(() {
+        _chatMessages = messages;
+        _isLoading = false;
+      });
+      _scrollToBottom();
+    } catch (e) {
+      setState(() => _isLoading = false);
+      _showErrorSnackBar('Failed to load chat history: $e');
+    }
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
   }
 
   void _sendChatMessage() async {
@@ -32,35 +52,53 @@ class _ChatScreenState extends State<ChatScreen> {
     final userMessage = _chatController.text.trim();
     _chatController.clear();
 
-    setState(() {
-      _chatMessages.add(ChatMessage(
-        text: userMessage,
-        isUser: true,
-        timestamp: DateTime.now(),
-      ));
-      _isTyping = true;
-    });
-
-    _scrollToBottom();
+    // Create and save user message
+    final userChatMessage = ChatMessage(
+      text: userMessage,
+      isUser: true,
+      timestamp: DateTime.now(),
+    );
 
     try {
-      final response = await ChatService.sendMessage(userMessage);
+      // Save user message to database
+      await _dataManager.addChatMessage(userChatMessage);
       
       setState(() {
-        _chatMessages.add(ChatMessage(
-          text: response,
-          isUser: false,
-          timestamp: DateTime.now(),
-        ));
+        _chatMessages.add(userChatMessage);
+        _isTyping = true;
+      });
+
+      _scrollToBottom();
+
+      // Get AI response
+      final response = await ChatService.sendMessage(userMessage);
+      
+      // Create and save AI response
+      final aiChatMessage = ChatMessage(
+        text: response,
+        isUser: false,
+        timestamp: DateTime.now(),
+      );
+
+      await _dataManager.addChatMessage(aiChatMessage);
+      
+      setState(() {
+        _chatMessages.add(aiChatMessage);
         _isTyping = false;
       });
     } catch (e) {
+      // Create error message
+      final errorMessage = ChatMessage(
+        text: "I apologize, but I'm experiencing technical difficulties. Please try again later or contact your healthcare provider if you have urgent concerns.",
+        isUser: false,
+        timestamp: DateTime.now(),
+      );
+
+      // Save error message to database
+      await _dataManager.addChatMessage(errorMessage);
+      
       setState(() {
-        _chatMessages.add(ChatMessage(
-          text: "I apologize, but I'm experiencing technical difficulties. Please try again later or contact your healthcare provider if you have urgent concerns.",
-          isUser: false,
-          timestamp: DateTime.now(),
-        ));
+        _chatMessages.add(errorMessage);
         _isTyping = false;
       });
     }
@@ -78,6 +116,45 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     });
+  }
+
+  Future<void> _clearChatHistory() async {
+    try {
+      bool confirmed = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: Text('Clear Chat History'),
+            content: Text('Are you sure you want to clear all chat messages? This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: Text('Clear'),
+              ),
+            ],
+          );
+        },
+      ) ?? false;
+
+      if (confirmed) {
+        await _dataManager.clearChatHistory();
+        await _loadChatHistory(); // Reload chat (will include welcome message)
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Chat history cleared'),
+            backgroundColor: Color(0xFF10B981),
+          ),
+        );
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to clear chat history: $e');
+    }
   }
 
   Widget _buildChatBubble(ChatMessage message) {
@@ -164,6 +241,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               ),
+              // Clear chat button
+              IconButton(
+                onPressed: _clearChatHistory,
+                icon: Icon(Icons.clear_all, color: Colors.grey[600]),
+                tooltip: 'Clear chat history',
+              ),
               Container(
                 width: 12,
                 height: 12,
@@ -178,57 +261,81 @@ class _ChatScreenState extends State<ChatScreen> {
         
         // Chat Messages
         Expanded(
-          child: ListView.builder(
-            controller: _chatScrollController,
-            padding: EdgeInsets.symmetric(vertical: 8),
-            itemCount: _chatMessages.length + (_isTyping ? 1 : 0),
-            itemBuilder: (context, index) {
-              if (index < _chatMessages.length) {
-                return _buildChatBubble(_chatMessages[index]);
-              } else {
-                // Typing indicator
-                return Container(
-                  margin: EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-                  child: Row(
+          child: _isLoading
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(color: Color(0xFF10B981)),
+                    SizedBox(height: 16),
+                    Text('Loading chat history...', style: TextStyle(color: Colors.grey[600])),
+                  ],
+                ),
+              )
+            : _chatMessages.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: Color(0xFF10B981),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(Icons.smart_toy, color: Colors.white, size: 18),
-                      ),
-                      SizedBox(width: 8),
-                      Container(
-                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
-                              ),
-                            ),
-                            SizedBox(width: 8),
-                            Text('Typing...', style: TextStyle(color: Colors.grey[600])),
-                          ],
-                        ),
-                      ),
+                      Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey[400]),
+                      SizedBox(height: 16),
+                      Text('Start a conversation!', style: TextStyle(color: Colors.grey[600], fontSize: 18)),
+                      SizedBox(height: 8),
+                      Text('Ask me anything about your health', style: TextStyle(color: Colors.grey[500])),
                     ],
                   ),
-                );
-              }
-            },
-          ),
+                )
+              : ListView.builder(
+                  controller: _chatScrollController,
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  itemCount: _chatMessages.length + (_isTyping ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index < _chatMessages.length) {
+                      return _buildChatBubble(_chatMessages[index]);
+                    } else {
+                      // Typing indicator
+                      return Container(
+                        margin: EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: Color(0xFF10B981),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.smart_toy, color: Colors.white, size: 18),
+                            ),
+                            SizedBox(width: 8),
+                            Container(
+                              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text('Typing...', style: TextStyle(color: Colors.grey[600])),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                  },
+                ),
         ),
         
         // Chat Input
@@ -280,5 +387,12 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ],
     );
+  }
+
+  @override
+  void dispose() {
+    _chatController.dispose();
+    _chatScrollController.dispose();
+    super.dispose();
   }
 }
